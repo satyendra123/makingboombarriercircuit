@@ -1,0 +1,125 @@
+#isme humne esp32 ke internal timer ka use kiya hai. isse hum auto time set kar sakte hai jisse barrier auto off ho jayega
+import machine
+import time
+
+# Define GPIO pins
+UP_PIN = 5
+DOWN_PIN = 18
+STOP_PIN = 19
+IR_SENSOR_PIN = 4
+AUTO_DOWN_SET_PIN = 14  # Button to enter the auto-down time setting mode
+AUTO_DOWN_UP_PIN = 25   # Button to increase the auto-down time
+AUTO_DOWN_DOWN_PIN = 26 # Button to decrease the auto-down time
+AUTO_DOWN_OK_PIN = 27   # Button to confirm the auto-down time
+RF_RECEIVER_PIN = 15    # RF receiver pin
+
+entryLoopPin = 5  # Entry loop detector pin
+exitLoopPin = 4   # Exit loop detector pin
+debounceDelay = 50  # Debounce delay in milliseconds
+
+# Initialize GPIO pins
+up = machine.Pin(UP_PIN, machine.Pin.OUT)
+down = machine.Pin(DOWN_PIN, machine.Pin.OUT)
+stop = machine.Pin(STOP_PIN, machine.Pin.OUT)
+ir_sensor = machine.Pin(IR_SENSOR_PIN, machine.Pin.IN)
+entryLoop = machine.Pin(entryLoopPin, machine.Pin.IN, machine.Pin.PULL_UP)
+exitLoop = machine.Pin(exitLoopPin, machine.Pin.IN, machine.Pin.PULL_UP)
+setButton = machine.Pin(AUTO_DOWN_SET_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+upButton = machine.Pin(AUTO_DOWN_UP_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+downButton = machine.Pin(AUTO_DOWN_DOWN_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+okButton = machine.Pin(AUTO_DOWN_OK_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+rfReceiver = machine.Pin(RF_RECEIVER_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+
+# TM1637 display setup
+# Assuming you have a TM1637 display driver, import and set it up
+# from tm1637 import TM1637
+# tm = TM1637(clk=machine.Pin(21), dio=machine.Pin(22))
+
+# Initialize the timer
+auto_down_timer = machine.Timer(0)
+
+def display_number(number):
+    # Display the number on TM1637
+    # tm.number(number)
+    print(number)  # Print to console for testing
+
+def open_barrier():
+    global barrier_open
+    up.on()
+    time.sleep(1)  # Keep the UP signal on for 1 second (adjust as needed)
+    up.off()
+    barrier_open = True
+    # Set the auto-down timer if the auto_down_time is set
+    if auto_down_time > 0:
+        auto_down_timer.init(period=auto_down_time * 1000, mode=machine.Timer.ONE_SHOT, callback=lambda t: close_barrier())
+
+def close_barrier():
+    global barrier_open
+    down.on()
+    time.sleep(1)  # Keep the DOWN signal on for 1 second (adjust as needed)
+    down.off()
+    barrier_open = False
+
+# Initial state
+barrier_open = False
+lastEntryTime = 0
+lastExitTime = 0
+auto_down_time = 0
+setting_time = False
+
+while True:
+    currentTime = time.ticks_ms()
+
+    # Handle auto-down time setting
+    if setButton.value() == 0:
+        setting_time = True
+        time.sleep(0.2)  # Debounce
+
+    while setting_time:
+        if upButton.value() == 0:
+            auto_down_time += 1
+            display_number(auto_down_time)  # Display the auto-down time
+            time.sleep(0.2)  # Debounce
+        elif downButton.value() == 0:
+            auto_down_time = max(0, auto_down_time - 1)
+            display_number(auto_down_time)  # Display the auto-down time
+            time.sleep(0.2)  # Debounce
+        elif okButton.value() == 0:
+            setting_time = False
+            time.sleep(0.2)  # Debounce
+
+    entryReading = entryLoop.value()
+    exitReading = exitLoop.value()
+
+    # Handle entry detection
+    if entryReading == 0 and (currentTime - lastEntryTime >= debounceDelay):
+        time.sleep(0.05)  # Debounce delay
+        if entryLoop.value() == 0:
+            if not barrier_open:
+                open_barrier()
+            lastEntryTime = currentTime
+            time.sleep(1)  # Sleep to stabilize the system
+
+    # Handle exit detection
+    elif exitReading == 0 and (currentTime - lastExitTime >= debounceDelay):
+        time.sleep(0.05)  # Debounce delay
+        if exitLoop.value() == 0:
+            if barrier_open:
+                close_barrier()
+            lastExitTime = currentTime
+            time.sleep(1)  # Sleep to stabilize the system
+
+    # RF Receiver handling
+    if rfReceiver.value() == 0:
+        # Handle RF signal from the transmitter
+        # Assuming rfReceiver.value() is the signal indicating UP or DOWN command
+        # Define UP_SIGNAL and DOWN_SIGNAL according to your RF signal specifications
+        UP_SIGNAL = 1  # Example value, replace with actual value
+        DOWN_SIGNAL = 2  # Example value, replace with actual value
+
+        if rfReceiver.value() == UP_SIGNAL:
+            open_barrier()
+        elif rfReceiver.value() == DOWN_SIGNAL:
+            close_barrier()
+
+    time.sleep(0.1)  # Polling interval
